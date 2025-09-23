@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>NL→SQL (CSV → SQLite)</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- estilos mínimos para el colapsable -->
+  <style>
+    details.collapsible > summary {
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+      padding: 0;
+      margin: 0 0 8px 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    details.collapsible > summary::-webkit-details-marker { display: none; }
+    .chev { display:inline-block; transition: transform .2s ease; }
+    details[open] > summary .chev { transform: rotate(90deg); }
+  </style>
+
+  <script>
+    function toggleProviderFields() {
+      const provSel = document.getElementById('provider');
+      const prov = (provSel?.value || 'openai').toLowerCase();
+      const openaiDiv = document.getElementById('openai_fields');
+      const ollamaDiv = document.getElementById('ollama_fields');
+      if (prov === 'ollama') {
+        openaiDiv.style.display = 'none';
+        ollamaDiv.style.display = 'block';
+      } else {
+        openaiDiv.style.display = 'block';
+        ollamaDiv.style.display = 'none';
+      }
+    }
+
+    // recordar estado del colapsable del esquema
+    function initSchemaCollapse() {
+      const det = document.getElementById('schemaDetails');
+      if (!det) return;
+      const saved = localStorage.getItem('schema_open');
+      if (saved !== null) det.open = (saved === 'true');
+      det.addEventListener('toggle', () => {
+        localStorage.setItem('schema_open', det.open ? 'true' : 'false');
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      toggleProviderFields();
+      initSchemaCollapse();
+    });
+  </script>
+</head>
+<body>
+<div class="container">
+  <h1>NL→SQL (CSV → SQLite)</h1>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-wrap">
+        {% for category, message in messages %}
+          <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <section class="card">
+    <h2>1) Cargar CSV</h2>
+    <form method="post" enctype="multipart/form-data">
+      <label>Archivo CSV:
+        <input type="file" name="csv_file" accept=".csv" required>
+      </label>
+
+      <label>Nombre de la tabla (opcional):
+        <input type="text" name="table_name" placeholder="data">
+      </label>
+
+      <label>Proveedor:
+        <select id="provider" name="provider" onchange="toggleProviderFields()">
+          <option value="openai" {{ 'selected' if provider=='openai' else '' }}>OpenAI</option>
+          <option value="ollama" {{ 'selected' if provider=='ollama' else '' }}>Ollama (local)</option>
+        </select>
+      </label>
+
+      <div id="openai_fields">
+        <label>Modelo OpenAI:
+          <select name="openai_model">
+            <option value="gpt-4o-mini">gpt-4o-mini</option>
+            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+          </select>
+        </label>
+        <label>OPENAI_API_KEY:
+          <input type="password" name="openai_api_key" placeholder="sk-..." autocomplete="off">
+        </label>
+      </div>
+
+      <div id="ollama_fields" style="display:none">
+        <label>Modelo Ollama:
+          <!-- si app.py ya pasa ollama_model, se conserva tras redirect -->
+          <input type="text" name="ollama_model"
+                 value="{{ ollama_model or 'llama3.1:8b-instruct' }}"
+                 placeholder="ej. gpt-oss:20b">
+        </label>
+        <label>Base URL de Ollama:
+          <input type="text" name="ollama_base_url"
+                 value="{{ ollama_base_url or 'http://localhost:11434' }}">
+        </label>
+        <p style="opacity:.8;font-size:.9em;margin-top:6px">
+          Asegúrate de tener <code>ollama</code> corriendo y el modelo descargado:<br>
+          <code>ollama pull {{ ollama_model or 'llama3.1:8b-instruct' }}</code>
+        </p>
+      </div>
+
+      <button type="submit">Cargar</button>
+    </form>
+  </section>
+
+  {% if table_name %}
+  <section class="card">
+    <!-- Esquema colapsable (por defecto, cerrado) -->
+    <details id="schemaDetails" class="collapsible">
+      <summary>
+        <span class="chev">▶</span>
+        <h2 style="display:inline;margin:0">2) Esquema detectado (para el prompt)</h2>
+      </summary>
+      <pre class="schema" style="margin-top:8px">{{ schema_text }}</pre>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>3) Pregunta en lenguaje natural</h2>
+    <form method="post">
+      <textarea name="user_query" rows="3" placeholder="e.g., top 10 categorías por total de ventas en 2023"></textarea>
+      <button type="submit">Generar y ejecutar SQL</button>
+    </form>
+  </section>
+
+  {% if last_sql %}
+  <section class="card">
+    <h3>SQL generado</h3>
+    <pre id="sql_box" class="sql">{{ last_sql }}</pre>
+    <button id="copy_btn" onclick="navigator.clipboard.writeText(document.getElementById('sql_box').innerText)">Copiar SQL</button>
+  </section>
+  {% endif %}
+
+  {% if result_html %}
+  <section class="card">
+    <h3>Resultados</h3>
+    <div class="table-wrap">{{ result_html|safe }}</div>
+  </section>
+  {% endif %}
+  {% endif %}
+</div>
+</body>
+</html>
