@@ -88,8 +88,13 @@
     <h3>Resultados</h3>
     <div class="table-wrap">{{ result_html|safe }}</div>
   </section>
+  <p style="text-align:right"><a href="{{ url_for('logout') }}">Cerrar sesión</a></p>
   {% endif %}
   {% endif %}
 </div>
 </body>
 </html>
+
+
+
+
