@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session
 import os
 import pandas as pd
 from db import CSVDb
@@ -11,15 +11,64 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret")
 
-STATE = {"db": None, "table": None, "schema_text": None, "model": None}
+# Cookies de sesión un poco más seguras en prod (Render)
+IS_PROD = os.environ.get("RENDER", "").lower() in {"true", "1"} or os.environ.get("FLASK_ENV") == "production"
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=IS_PROD,  # en HTTPS se marca Secure
+)
 
+STATE = {"db": None, "table": None, "schema_text": None, "model": None}
 DEFAULT_LIMIT = 1000
 
+# --------- Auth ----------
+def is_authenticated() -> bool:
+    return bool(session.get("auth"))
+
+@app.before_request
+def require_login():
+    # Permite login, logout, salud y estáticos
+    if request.path.startswith("/static/"):
+        return
+    if request.endpoint in {"login", "logout", "health"}:
+        return
+    # Bloquea todo lo demás si no hay sesión
+    if not is_authenticated():
+        return redirect(url_for("login"))
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    configured_password = os.environ.get("APP_PASSWORD")
+    if not configured_password:
+        return "APP_PASSWORD no está configurada en el entorno.", 500
+
+    if request.method == "POST":
+        pwd = request.form.get("password", "")
+        if pwd == configured_password:
+            session["auth"] = True
+            flash("Sesión iniciada.", "success")
+            return redirect(url_for("index"))
+        else:
+            flash("Contraseña incorrecta.", "error")
+
+    return render_template("login.html")
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    flash("Sesión cerrada.", "success")
+    return redirect(url_for("login"))
+
+@app.route("/health")
+def health():
+    return {"ok": True}
+
+# --------- App principal ----------
 def apply_default_limit(sql: str, limit: int = DEFAULT_LIMIT) -> str:
     low = sql.lower()
     if " limit " in low:
         return sql
-    # Envolvemos para no romper ORDER BY/AGG
     return f"SELECT * FROM ({sql}) AS _sub LIMIT {limit}"
 
 @app.route("/", methods=["GET", "POST"])
@@ -41,7 +90,7 @@ def index():
             schema_text = db.describe_schema(table_name)
             system_prompt = build_system_prompt(schema_text, dialect="SQLite")
 
-            # Instancia NL→SQL con modelo por defecto (gpt-4o-mini) y API desde ENV
+            # Modelo fijo por defecto: gpt-4o-mini (API desde ENV)
             nltosql = NLtoSQL(system_prompt=system_prompt, model="gpt-4o-mini")
 
             STATE.update({"db": db, "table": table_name, "schema_text": schema_text, "model": nltosql})
@@ -90,8 +139,6 @@ def index():
     )
 
 if __name__ == "__main__":
-    # Para local. En Render usará Gunicorn.
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True, use_reloader=False)
-
 
